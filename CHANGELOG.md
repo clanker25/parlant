@@ -1,0 +1,474 @@
+# Changelog
+
+All notable changes to Parlant will be documented here.
+
+This file starts over at Parlant 4. Parlant 4 reshapes enough of the public
+vocabulary that the older entries describe an API you can no longer call, so
+keeping them here would mislead more than it informs. Everything up to 3.3.2 is
+in this repository's history — read it at the `v3.3.2` tag, or with
+`git show v3.3.2:CHANGELOG.md`.
+
+Each entry says what changed and what it means for you, under `Added`,
+`Changed`, `Deprecated`, `Removed`, `Fixed` or `Security`.
+
+## [Unreleased]
+
+## [4.0.9] - 2026-11-24
+
+### Added
+
+- `ToolRecaller` takes an optional `min_relevance_score`. Tools that no
+  applying rule enabled, this turn or earlier in the session, are offered to
+  the agent only if their relevance to the conversation reaches that score,
+  so fewer unrelated tools reach the prompt. Tools enabled by rules are always
+  offered. To use it, register your own `ToolRecaller` as the `ToolSelector`
+  in the container. Without it, tool selection is unchanged.
+- `parlant dashboard agent a2a set AGENT_ID --personal-agent-simulations off`
+  stops that agent's scheduled personal-agent simulations; `on` enables them.
+  Both keep its saved daily number, protocols and other settings. `get` and
+  `set` show the saved simulation state and daily number.
+
+### Changed
+
+- Pruning of a session's discovered rules now asks one decision-model call
+  about all the rules at once, instead of one small-model call per rule. This
+  applies at MIN, LOW and MEDIUM effort, when a decision model is configured
+  for `matching.rank` (it is by default with Gemini), the same as rule ranking.
+  At HIGH and MAX effort, or with no decision model, each rule still gets its
+  own call with a written reason. Pruning costs much less: on Gemini, about 40
+  gemini-3.1-flash-lite calls become one gemini-decision-1 call.
+- At HIGH effort, rule ranking and pruning now give a per-rule verdict, with
+  its written reason, only to HIGH-weight rules. All other rules are judged in
+  one decision-model call, when one is configured. MAX effort still gives
+  every rule its own call. HIGH-effort turns get cheaper and faster. If you
+  need a rule judged with a written reason at HIGH effort, give it HIGH weight.
+
+### Fixed
+
+- Pruning of a session's discovered rules no longer runs before the session's
+  tenth customer message. The once-per-10-messages limit used to apply only
+  after the first pruning, so a first message that pulled in many rules could
+  set off one small-model call per rule right away. Early turns now cost less.
+- Dashboard CLI sign-in requests permission to manage A2A settings through the
+  browser approval flow. Owners and Admins with an older sign-in can run
+  `parlant dashboard auth login --reauthorize` to approve the added permission.
+  Workspace roles still decide who may change these settings.
+
+## [4.0.8] - 2026-11-23
+
+### Fixed
+
+- `parlant lint` rule WTV001 now tells coding agents to preserve required
+  disclosures and actions when removing duplicated canned-response wording.
+
+## [4.0.7] - 2026-11-21
+
+### Added
+
+- `exclude()` on rules and groups, and `except_when=[...]` on
+  `create_policy()` and `create_observation()`, add an exclusion: while the
+  excluding rule applies, the excluded one is ignored completely. Unlike
+  `prioritize_over()`, which keeps the losing policy in the agent's
+  instructions with a note to set it aside, an excluded rule is left out of
+  the prompt, its tools are not offered (unless another rule also grants
+  them), and it entails, satisfies and outranks nothing, so a rule that
+  depends on it loses too. It comes back as soon as the excluding rule stops
+  applying. An excluded rule excludes nothing in turn, and exclusion is
+  resolved before priority. Excluding itself, excluding something it depends
+  on, and loops of exclusions are refused. When an exclusion starts or stops
+  applying mid-response, the agent's system instructions are rebuilt, so that
+  step does not reuse the cached prompt prefix.
+
+### Fixed
+
+- Rejected rule edits that remove all text now leave the original rule and its
+  search vectors unchanged. Previously an empty or whitespace-only edit could
+  fail after saving, leaving unreadable rule data or stale vectors behind.
+
+## [4.0.6] - 2026-11-16
+
+### Added
+
+- `parlant lint` lints a Parlant agent project through your coding agent. It
+  prints instructions for the coding agent: which lint chapters to run, each in
+  its own subagent (`parlant lint --section SECTION --chapter CHAPTER` prints a
+  chapter's rules), and how to handle findings by severity. HIGH findings are
+  fixed right away, at most 3 MEDIUM issue types are proposed per round, and
+  LOW ones only with your OK. The first sections are Behavior (observations
+  that combine several situations, whether alternatives or ones that must all
+  hold) and Wording and Tone of Voice (canned
+  responses rather than wording in policies or instructions). Every rule has an
+  ID, such as `BHV001`, that stays the same across releases.
+- `parlant init` now installs a git pre-push hook (`.githooks/pre-push`, set
+  through `core.hooksPath`) that stops a push until the commit has been linted,
+  and the scaffolded AGENTS.md tells the coding agent to run `parlant lint`
+  before every push. After linting and committing the fixes, `parlant lint
+  --done` records the commit so the push goes through; `git push --no-verify`
+  skips the hook. A clone of the project turns the hook on with
+  `git config core.hooksPath .githooks`. `--no-git` installs no hook.
+- `parlant dashboard agent cards AGENT_ID DESTINATION` writes every file your
+  site serves so personal AI agents find your agent, into `DESTINATION/.well-known`:
+  `agent-card.json` for A2A, and `poppy.json` and `poppy-0.4.json` for Poppy, the
+  Personal Agent Protocol that Meta Muse and Shopify use. `--no-a2a` and
+  `--no-poppy` leave a family out. The Poppy documents need the agent's site set
+  in the Dashboard, since Poppy identifies a business by its domain; without it the
+  command writes the card and says so. `parlant dashboard agent view` shows the
+  agent's POPPY ADDRESS, and `parlant widget init` points at the new command.
+  `parlant dashboard agent card` still prints the A2A card alone for older
+  instructions.
+- The chat widget's `onPathChanged(path, notifyAgent)` tells the agent which page
+  the visitor is on. It's called when the widget loads and when the path changes
+  without a reload; `notifyAgent(path, data?)` adds a custom event
+  (`{ type: "page_view", page: path, ...data }`, source `customer_ui`) that doesn't start
+  a reply. A new conversation gets it before anything else, so the agent can tell
+  a question asked on your pricing page from one asked on your home page.
+
+### Changed
+
+- At high agent effort, pruning previously discovered rules now defaults to
+  low model reasoning, matching rule ranking. Explicit model-route reasoning
+  settings still take precedence.
+- When one policy entails another, the entailed policy is now judged with the
+  policies that entail it in view. This helps when its wording relies on
+  theirs, such as "the add-on" that another policy defines. It still matches on
+  its own merits, and entailment works as before: when an entailing policy
+  matches, the entailed one is activated too.
+- Guests and signed-in customers may add custom events to their own sessions,
+  with source `customer_ui`, up to 4 KB of data and 30 a minute. Until now only
+  the backend could, so a site had to relay page views through its own server
+  with the admin key. Other sources still need the admin key; a custom permission
+  gate that doesn't grant `CREATE_CUSTOM_EVENT` keeps refusing them.
+  `PARLANT_CUSTOMER_UI_EVENT_MAX_BYTES` changes the size limit (4096 by default).
+- A chat widget with a video avatar now moves the video into a circle beside
+  the agent's name once the conversation scrolls, and the space it leaves
+  closes up. Scrolling up past the top brings it back. The header keeps its
+  height and fades out over the messages below the circle. The name and
+  subtitle fade out while the video moves and back in beside the circle, the
+  subtitle under the name. A photo avatar is now the same size as the docked
+  circle, and its header fades out over the messages below it too. Scrolling up
+  in the widget no longer gets pulled back down in a short conversation, and
+  sending a message brings the view to it.
+  On phones the widget only shows the circle, which is cropped onto the face
+  by the avatar's `launcher` setting. Your project keeps the copy
+  `parlant widget init` made. To pick this up, run
+  `parlant widget init --force`, which replaces that copy and any changes you
+  made to it.
+- With Gemini as your provider, replies at medium, high and max effort and both
+  review checks now run on Gemini 4 Hydrogen instead of Gemini 3.8 Flash. Medium
+  effort keeps low reasoning. On a website agent this cut replies from 15–30
+  seconds to 6–8, and Hydrogen kept its reasoning out of replies where 3.8 Flash
+  at low reasoning had written it into one. Minimal and low effort stay on
+  Flash-Lite. A `react` or `review.*` route you set yourself is unchanged. To
+  keep the old model, route it explicitly, e.g.
+  `"react": p.ModelConfig("gemini:gemini-3.8-flash", reasoning="low")`.
+- LiteLLM's default for both review checks is now `gemini/gemini-4-hydrogen`
+  instead of `gemini/gemini-3.8-flash`.
+
+### Fixed
+
+- An observation with a title but no note no longer appears in the agent's
+  instructions as an empty entry (its title followed by "Details: [None]",
+  without its condition). A rule now reaches the agent's prompt only when it
+  says something: its content (an observation's note, a policy's action), or
+  the tools it makes relevant, in which case its condition is shown even when
+  it has a title. Rules without content are also left out of the note that
+  tells the agent which instructions lost priority this turn. Observations
+  without a note keep working for relationships, canned-response scoping and
+  matching; they simply cost no prompt tokens.
+- Logging scopes now unwind after exceptions and cancellation, so later logs
+  in the same task do not retain stale component labels.
+- The chat widget centers its disclaimer and "Powered by Parlant" under the input on phones.
+- The chat widget no longer shows "↓ New messages" in an empty or short chat that the
+  visitor scrolled up in. The pill now appears only when there is something below to jump to.
+- The chat widget no longer ends a finished reply with a stray `*`. A reply with
+  an odd number of `* ` bullets used to get one after its last word. Half-typed
+  bold and italics still close while a reply streams. To pick up this and the
+  other widget fixes, run `parlant widget init --force`, which replaces your
+  project's copy of the widget and any changes you made to it.
+- A reasoning level set on a Gemini 4 model in a schematic route, such as
+  `"review.*": p.ModelConfig("gemini:gemini-4-hydrogen", reasoning="high")`, is now
+  sent to Gemini. It used to be dropped, so the model thought at its own default.
+- Canned-response relevance now considers matches from every query chunk before
+  selecting the closest responses, retaining each response's best matching score.
+
+## [4.0.5] - 2026-11-12
+
+### Added
+
+- Gemini 4 Hydrogen works through the Gemini provider, including streamed replies,
+  tool calls, saved conversation replay and token accounting. Select it as
+  `gemini:gemini-4-hydrogen`; existing default models are unchanged.
+- The chat widget shows Markdown tables in an agent's reply as tables. They
+  used to show as lines of pipes. Column alignment, inline Markdown in cells
+  and escaped pipes work. A streamed table appears once its header and divider
+  rows arrive and fills in cell by cell. A wide table scrolls sideways inside
+  the message, and your site's own table styles don't change it. Your project
+  keeps the copy `parlant widget init` made. To pick this up, run
+  `parlant widget init --force`, which replaces that copy and any changes you
+  made to it.
+- Event streams (`sse=true`) now carry an `id` on every frame and resume from
+  it. A client that reconnects with `Last-Event-ID` picks up after the frame it
+  last saw, instead of replaying the session from the beginning. Streams ask a
+  reconnecting browser to wait three seconds (`retry: 3000`), and an idle
+  stream sends a keep-alive comment every 15 seconds, so a proxy no longer
+  closes a quiet connection before `wait_for_data` expires. When a request
+  carries both `min_offset` and `Last-Event-ID`, the later of the two wins: a
+  reconnecting client usually still has the original `min_offset` in its URL,
+  and honoring it would replay the session. The delay and the keep-alive
+  interval can be set with `PARLANT_SSE_RETRY_MS` and
+  `PARLANT_SSE_HEARTBEAT_SECONDS`; `0` disables the keep-alive, and `0` for the
+  delay omits the `retry:` line.
+- Gemini serves Google's Gemini Decision 1 (`gemini-decision-1`), which answers
+  many yes/no, choice and scale questions about one conversation in a single
+  request. A `{"*": "gemini"}` route now uses it for rule ranking at the
+  efforts that rank rules in one batch, as OpenAI and OpenRouter routes already
+  do with their decision models. Name it on a route with
+  `"matching.rank[capability=decision]": "gemini:gemini-decision-1"`. It uses
+  your existing `GEMINI_API_KEY`. Gemini reports no cost for it, so add a
+  `gemini-decision-1` entry to `server.set_pricing(...)` (Google lists $0.10 per
+  million input tokens and nothing for output) to have it priced.
+
+### Changed
+
+- Gemini models count tokens on your server instead of asking the Gemini API,
+  which took about 300ms per count. A step after a tool call made two such
+  calls in a row while choosing canned responses, so replies after a tool call
+  now start about 0.4–0.6s sooner. Counts use the open Gemma 3 tokenizer and
+  are within a token or two of Google's. The `gemini` extra now installs
+  `sentencepiece`. The tokenizer downloads once from raw.githubusercontent.com,
+  in the background, on the first count. Until it's ready, or if your server
+  can't reach GitHub, Parlant counts with the API as before and logs one warning
+  saying so.
+- Agents no longer repeat what the customer just said back to them before
+  replying ("Lead generation for a logistics startup, so…"). A reaction now
+  responds to what the message means, and when the customer is answering the
+  agent's own question, the agent goes straight to its next step. The prompt no
+  longer bans stock acknowledgments such as "makes sense" by name.
+- Agents created by `parlant init` no longer learn to repeat the visitor's words
+  back. The warm-host and upbeat personalities now react to what a message
+  means, and the warm host goes straight to its next step when the visitor is
+  answering its question. Existing projects keep their own text; copy the new
+  wording from a fresh `parlant init` if your agent echoes.
+
+### Fixed
+
+- On managed (Dashboard-hosted) servers, `session.metadata.get()`, `.set()`
+  and `.delete()`, `session.update()` and `server.get_session()` failed with
+  "Session not found" for live conversations, because they looked in the store
+  that holds startup declarations instead of the one that holds sessions. They
+  now use the same session store as the engine and the API, as
+  `session.labels` already did, so a retriever or tool that reads or writes
+  session metadata works the same hosted as it does locally.
+- Pricing checks no longer warn about unused provider-default models when a
+  more specific model route overrides them, such as Gemini embeddings on an
+  Anthropic server. Models still reachable through other routes, and models
+  actually observed in use, remain included in pricing coverage.
+- MCP tools that return structured results, such as a pydantic model, now give
+  the agent the result as plain JSON. Before, the call ran but the agent was
+  told "Tool call error", so it could retry a call that had already taken
+  effect or tell the customer it failed.
+- Gemini agents under concurrent load no longer queue behind each other while
+  a prompt cache is being created. Requests for other caches, and requests whose
+  cache already exists, go ahead at once; requests for the same cache still
+  share one creation, so it is created and its storage charged once.
+- Servers with MongoDB stores start faster as session and event history grows.
+  When a store's recorded version already matches the running one, startup no
+  longer reads every document back through its loader. When a migration is
+  needed, documents are loaded and migrated as before.
+
+## [4.0.4] - 2026-11-08
+
+### Added
+
+- `Agent.queue_response()` combines background follow-ups with other ready
+  results or a customer turn. Pass `after=coroutine` to register work before it
+  starts; only the deferred reply waits for the registered batch. Coordination
+  lives in one process and requires session routing affinity; pending work is
+  not recovered after a restart. Queued replies tolerate history edits and
+  terminate interrupted streams without appending stale text.
+
+### Changed
+
+- When tool preambles are encouraged, the agent writes them, and the progress
+  updates that follow, in the customer's language.
+- Agents acknowledge recurring information gaps when different questions cannot
+  be answered, without treating a new question as one already answered.
+- Agents ask which record or request the customer means when it's ambiguous,
+  and which of several unfinished requests to handle first, before collecting
+  task details.
+
+### Fixed
+
+- Gemini conversations can resume from background results after history is
+  cleared, without an invalid tool-response ordering error.
+- The Parlant dashboard now shows your agent's reasoning under Agent activity
+  when the agent streams its messages, the default for `create_agent`. Each
+  step's reasoning is now recorded as a `loop.reasoning` trace event. Before,
+  it reached the dashboard only as a log line, which the dashboard read only
+  from agents in block output mode.
+- `parlant[anthropic]` works with the current Anthropic SDK. A fresh install
+  picked anthropic 1.0 or later, whose client refused Parlant's request timeout,
+  so no Claude model could start. The extra now requires `anthropic>=1.0.0`;
+  if your project capped anthropic below 1.0 to work around this, drop the cap.
+- The chat widget lays out a right-to-left reply, such as Hebrew, right to left
+  even when it opens with an English word, a URL or code. It used to take the
+  direction from the first letter, so such a reply read left to right with its
+  punctuation on the wrong side. Each paragraph, the message box and the
+  suggestion buttons now follow the script most of their words are in.
+
+## [4.0.3] - 2026-11-05
+
+### Changed
+
+- `parlant dashboard` commands now tell the Parlant dashboard which command
+  sent each request. Every request carries `User-Agent: parlant-cli/<version>`,
+  the command's name in `X-Parlant-CLI-Command` (for example
+  `parlant dashboard session list`, never its arguments or option values),
+  and an `X-Parlant-CLI-Invocation` id shared by every request from one run.
+  The dashboard uses them to show your CLI activity as the commands you ran.
+
+## [4.0.2] - 2026-11-05
+
+### Added
+
+- The chat widget lets the AI agent in a visitor's browser talk to your agent
+  over WebMCP (`document.modelContext`; in Chrome behind a flag today). On
+  every page it's on, the widget registers an `ask_agent` tool described with
+  the agent's name. A call starts the widget's conversation if there is none
+  yet, as one an agent holds for the customer (`customer_represented_by_an_agent`),
+  sends the question through the chat, so it shows there with the reply, opens
+  the chat, and answers the browser agent once the turn has ended. Follow-up
+  calls continue the same conversation. The message carries
+  `metadata.parlant_widget.asked_by = "customer_agent"`, so the chat and your
+  tools can tell the visitor's agent from the visitor. Nothing happens in a
+  browser without WebMCP; `webmcp={false}` turns it off. `ParlantTransport`'s
+  `sendMessage` takes an optional metadata argument and `ensureSession` an
+  option for the flag.
+- `Server(session_store=..., customer_store=...)` accepts an `s3://bucket`
+  URL to keep sessions and customers in Amazon S3. Give Parlant a bucket of
+  its own. Credentials come from the AWS credential chain; add `?region=` or,
+  for S3-compatible storage, `?endpoint=`. The storage must support
+  conditional writes, which keep concurrent servers from overwriting each
+  other's updates. Empty collections survive restarts, and a failed migration
+  write leaves the original data in place. Any query other than a lookup by ID,
+  such as listing sessions, reads every object in the collection, so use
+  MongoDB if you need indexed queries at scale.
+- The chat widget (`parlant widget init`) takes the agent's picture in one
+  `avatar` prop: `{ type: "logo", src }`, `{ type: "photo", src, live? }` or
+  `{ type: "video", src?, poster?, live?, launcher? }`. A video avatar plays a
+  short muted loop under the header, scrolls away with the conversation once
+  it starts, and keeps its opened size when the chat is expanded. On the closed
+  launcher, `launcher` crops it onto the face. Leave out `src` to use the
+  widget's own video of an agent. `live` adds the green dot, on the video's
+  corner too, red while the server can't be reached. Use an H.264 MP4 saved
+  with `-movflags +faststart`; iPhone Safari stalls on WebM.
+
+### Changed
+
+- The chat widget's persistent suggestions stand out from its opening ones:
+  outlined and lettered in the theme's primary color on the chat's background,
+  instead of the grey fill.
+- On phones and tablets, the chat widget closes the on-screen keyboard once a
+  message is sent, whether typed or picked from the suggestions, so the reply
+  isn't hidden behind it.
+- With the LiteLLM provider, review routes now default to
+  `gemini/gemini-3.8-flash` instead of `gemini/gemini-3.6-flash`, the same
+  model the Gemini provider already uses for them.
+- The `lead-gen` scaffold's agent no longer guesses when a visitor asks about
+  the business, its products or their project and its product knowledge has no
+  answer. It says it's a great question but hard to answer properly in the
+  chat, offers to connect them with the team, asks for an email or phone
+  number, and passes the question on with `request_team_follow_up`. Unrelated
+  questions, existing customers' order questions and prices are handled as
+  before. To make that possible, `record_lead` now accepts a lead with just a
+  goal and a contact: `buying_for` and `role` are optional, and an unknown one
+  scores nothing.
+- `parlant dashboard project confirm` finishes a local or self-hosted project
+  even when its server already holds sessions, such as from trying the agent.
+  It imports them into the dashboard first, as the dashboard's Sync does, and
+  then completes the setup, so the project no longer stays at "Finish setup".
+  An import that takes longer than about 90 seconds stops with
+  `SYNC_IN_PROGRESS`; run `confirm` again to keep waiting for the same import.
+  A failed import stops with `SYNC_FAILED` and its reason.
+- `parlant init --dashboard --json` and `parlant dashboard project create --json`
+  for a local or self-hosted project now list `nextSteps`, ending with
+  `project confirm`. The scaffolded `AGENTS.md` tells coding agents to confirm
+  the project once its server is connected.
+- After creating a managed project whose setup check found how to run it,
+  `parlant dashboard project create` now points to
+  `parlant dashboard --project ID deploy`: the first live deploy completes the
+  setup. The dashboard's setup page is optional for reviewing the settings.
+
+### Deprecated
+
+- The chat widget's `avatarUrl`, `avatarStyle` and `liveIndicator` props, in
+  favor of `avatar`. They still work when `avatar` isn't set.
+
+### Fixed
+
+- Gemini Argon can replay saved tool calls with their original signed thought
+  blocks instead of unnecessarily falling back to result-only history.
+- Filtering sessions by labels now returns complete pages and working
+  continuation cursors, with consistent total counts in either sort order.
+- MongoDB cursor pagination now preserves `$or` filters on later pages, so
+  filtered listings no longer include records outside the requested set.
+- Canned responses now retain separate search vectors for their text and
+  every signal, so signals no longer collide in the relevance index.
+  Applies when responses are created or updated; existing indexes are not
+  rebuilt automatically.
+- On iPhone, focusing the chat widget's message box no longer zooms the page
+  in, which pushed the open chat off the right edge of the screen. The box
+  uses a 16px font on touch screens, the size below which iOS zooms.
+- Local and MCP tools now accept comma-separated list arguments without
+  brackets while preserving quoted commas and empty lists.
+- The chat widget's latest message no longer slips under the suggestions and
+  message box when something takes the transcript's space, such as the
+  "Connection interrupted" banner appearing just after a send. The transcript
+  stayed pinned to the bottom only as messages grew, not as its view shrank.
+- Invalid context-variable freshness schedules are rejected before saving,
+  so a failed schedule update leaves the variable's existing data intact.
+- A customer message that arrives while the agent is still working on the
+  previous one now replaces that turn, as intended, even when the engine was in
+  the middle of rejecting a step: a tool call or message turned down by a
+  review hook, by the reviewer, or by moderation. Before, the rejection restarted
+  the step and dropped the pending cancellation, so the agent finished replying
+  to the first message and then answered the second one in a separate turn.
+  Customers who send two messages in quick succession now get one reply that
+  takes both into account.
+
+### Security
+
+- Raise the minimum `python-multipart` version to 0.0.30 for both uv
+  and pip installations, preventing installation of versions affected by
+  CVE-2026-53539.
+
+## [4.0.1] - 2026-11-02
+
+### Changed
+
+- `parlant init --scaffold lead-gen` now creates its agent with
+  `preamble_config=p.PreambleConfiguration.encourage()`. Before its first tool
+  call the agent says one short line, such as "Let me check that", so the
+  visitor isn't left waiting in silence. Without it, preambles were unmanaged:
+  whatever the model wrote before a tool call went straight through.
+- Every tool in the `lead-gen` and `retail-store` scaffolds now has a
+  `narration`, such as "Checking which days are free" or "Tracking your
+  shipment". The chat shows it while the tool runs, instead of the generic
+  "Running tools".
+
+### Fixed
+
+- With the Anthropic provider, indexing no longer fails on Claude Opus 4.7 and
+  later or any Claude 5 model, including the default routes (Sonnet 5.5 and
+  Haiku 5.5). Parlant sent a `temperature`, which those models reject with
+  "`temperature` is deprecated for this model."; it now sends one only to
+  Claude 3 models and Claude 4 models up to 4.6, which still accept it.
+- A reasoning effort on a Claude Fable model now uses adaptive thinking instead
+  of a thinking budget, which Fable rejects.
+- A reasoning effort on Claude Opus 4.5 no longer fails. Parlant sent it
+  adaptive thinking, which it rejects ("adaptive thinking is not supported on
+  this model"); it now gets a thinking budget, as Sonnet and Haiku 4.5 do.
+
+## [4.0.0] - 2026-11-02
+
+Parlant 4 release.
